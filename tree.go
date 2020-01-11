@@ -30,7 +30,7 @@ func (v *ValRef) address() int64 {
 }
 func (v *ValRef) _prepareToStore(s _Storage) {}
 
-func _TypetoInt(valType interface{}) (int64, error) { 
+func _TypetoInt(valType interface{}) (int64, error) {
 	switch v := valType.(type) {
 	case string:
 		_int, err := strconv.ParseInt(v, 10, 64)
@@ -94,7 +94,7 @@ func _TypetoBytes(valType interface{}) []byte {
 		enc := gob.NewEncoder(&buf)
 		err := enc.Encode(v)
 		if err != nil {
-			return 0, err
+			log.Fatal("encode error:", err)
 		}
 		data := buf.Bytes()
 		return data
