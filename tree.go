@@ -2,13 +2,16 @@ package gbdb
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"encoding/binary"
 	"encoding/gob"
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 )
 
+// ValRef 数据的引用,通过adress可以从数据库中提取数据
 type ValRef struct {
 	Ref     []byte // 储存的数据
 	Address int64  // 数据所在的地址
@@ -16,7 +19,7 @@ type ValRef struct {
 
 // Ref 数据引用类型接口
 type Ref interface {
-	get(Storage) ([]byte, error)
+	get(_Storage) ([]byte, error)
 	store()
 	_BytetoTypes([]byte, interface{})
 	_TypetoBytes(interface{}) []byte
@@ -25,14 +28,47 @@ type Ref interface {
 func (v *ValRef) address() int64 {
 	return v.Address
 }
-func (v *ValRef) _prepareToStore(s Storage) {}
+func (v *ValRef) _prepareToStore(s _Storage) {}
 
-func _TypetoBytes(valType interface{}) []byte { // 添加字符串和切片支持
+func _TypetoInt(valType interface{}) (int64, error) { 
+	switch v := valType.(type) {
+	case string:
+		_int, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return int64(0), err
+		}
+		return _int, nil
+	case int8:
+		return int64(v), nil
+	case int16:
+		return int64(v), nil
+	case int32:
+		return int64(v), nil
+	case int:
+		return int64(v), nil
+	default:
+		var buf bytes.Buffer
+		enc := gob.NewEncoder(&buf)
+		err := enc.Encode(v)
+		if err != nil {
+			return 0, err
+		}
+		data := buf.Bytes()
+		Sha1Inst := sha1.New()
+		Sha1Inst.Write(data)
+
+		Result := Sha1Inst.Sum([]byte(""))
+
+		return int64(binary.BigEndian.Uint64(Result)), nil
+	}
+}
+
+func _TypetoBytes(valType interface{}) []byte {
 	switch v := valType.(type) {
 	case string:
 		btyes := []byte(v)
 		return btyes
-	case Node:
+	case _Node:
 		var buf bytes.Buffer
 		enc := gob.NewEncoder(&buf)
 		if err := enc.Encode(v); err != nil {
@@ -46,7 +82,7 @@ func _TypetoBytes(valType interface{}) []byte { // 添加字符串和切片支�
 			log.Fatal("encode error:", err)
 		}
 		return buf.Bytes()
-	case NodeRef:
+	case _NodeRef:
 		var buf bytes.Buffer
 		enc := gob.NewEncoder(&buf)
 		if err := enc.Encode(v); err != nil {
@@ -54,14 +90,21 @@ func _TypetoBytes(valType interface{}) []byte { // 添加字符串和切片支�
 		}
 		return buf.Bytes()
 	default:
-		return []byte{}
+		var buf bytes.Buffer
+		enc := gob.NewEncoder(&buf)
+		err := enc.Encode(v)
+		if err != nil {
+			return 0, err
+		}
+		data := buf.Bytes()
+		return data
 	}
 }
 
 // 将Node的字节型数据，反序列化成Node类型
 // 返回Node类型指针
-func _ByteToNode(data []byte) *Node {
-	var node Node
+func _ByteToNode(data []byte) *_Node {
+	var node _Node
 	var buf bytes.Buffer
 	buf.Write(data)
 	dec := gob.NewDecoder(&buf)
@@ -80,7 +123,7 @@ func _BytetoTypes(data []byte, to interface{}) { // 添加字符串和切片支�
 	case string:
 		str := string(t)
 		t = str
-	case Node:
+	case _Node:
 		buf := new(bytes.Buffer)
 		err := binary.Read(buf, binary.LittleEndian, &t)
 		if err != nil {
@@ -90,7 +133,7 @@ func _BytetoTypes(data []byte, to interface{}) { // 添加字符串和切片支�
 }
 
 // 从ValRef的地址中获取ValRef指向的数据
-func (v *ValRef) get(storage Storage) []byte {
+func (v *ValRef) get(storage _Storage) []byte {
 	if v.Ref != nil {
 		_BytetoTypes(storage.Read(v.Address), v.Ref)
 	}
@@ -98,7 +141,7 @@ func (v *ValRef) get(storage Storage) []byte {
 }
 
 // 从NodeRef指向的地址中,获取Node节点
-func (n *NodeRef) get(storage Storage) *Node {
+func (n *_NodeRef) get(storage _Storage) *_Node {
 	if n.Address > 0 {
 		n.Ref = _ByteToNode(storage.Read(n.Address))
 	} else if n.Ref != nil && n.Ref.Length == -1 {
@@ -108,7 +151,7 @@ func (n *NodeRef) get(storage Storage) *Node {
 }
 
 // 将ValRef里的数据,储存到磁盘
-func (v *ValRef) store(storage Storage) {
+func (v *ValRef) store(storage _Storage) {
 	if v.Ref != nil {
 		v._prepareToStore(storage)
 		v.Address = storage.Write(v.Ref)
@@ -116,49 +159,49 @@ func (v *ValRef) store(storage Storage) {
 }
 
 // 将NodeRef里的节点，序列化后储存到磁盘
-func (nr *NodeRef) store(storage Storage) {
-	if nr.Ref != nil && nr.Address == -1 {
-		nr._prepareToStore(storage)
-		nr.Address = storage.Write(_TypetoBytes(*nr.Ref))
+func (n *_NodeRef) store(storage _Storage) {
+	if n.Ref != nil && n.Address == -1 {
+		n._prepareToStore(storage)
+		n.Address = storage.Write(_TypetoBytes(*n.Ref))
 	}
 }
 
-type NodeRef struct {
-	Ref *Node
+type _NodeRef struct {
+	Ref *_Node
 	ValRef
 }
 
 // 递归遍历节点指向的引用储存到磁盘中
-func (nr *NodeRef) _prepareToStore(s Storage) {
-	if &nr.Ref != nil {
-		nr.Ref.storeRefs(s)
+func (n *_NodeRef) _prepareToStore(s _Storage) {
+	if &n.Ref != nil {
+		n.Ref.storeRefs(s)
 	}
 }
 
 // 获取Node节点数据的长度。
-func (nr *NodeRef) length() int64 {
-	if nr.Ref == nil && nr.Address > 0 {
+func (n *_NodeRef) length() int64 {
+	if n.Ref == nil && n.Address > 0 {
 		fmt.Println("获取节点长度前，需要先加载节点")
 		return 0
-	} else if nr.Ref != nil {
-		return nr.Ref.Length
+	} else if n.Ref != nil {
+		return n.Ref.Length
 	} else {
 		return 0
 	}
 
 }
 
-type Node struct {
-	Left   *NodeRef
-	Right  *NodeRef
+type _Node struct {
+	Left   *_NodeRef
+	Right  *_NodeRef
 	Val    *ValRef
 	Key    int64
 	Length int64
 }
 
-// Node的构造函数
-func NewNode(key int64, length int64) *Node {
-	node := new(Node)
+// newNode Node的构造函数
+func newNode(key int64, length int64) *_Node {
+	node := new(_Node)
 	node.Left = nil
 	node.Right = nil
 	node.Val = nil
@@ -167,62 +210,62 @@ func NewNode(key int64, length int64) *Node {
 	return node
 }
 
-// NodeRef的构造函数
-func NewNodeRef() *NodeRef {
-	nodeRef := new(NodeRef)
+// newNodeRef _NodeRef 的构造函数
+func newNodeRef() *_NodeRef {
+	nodeRef := new(_NodeRef)
 	nodeRef.Ref = nil
 	nodeRef.Address = -1
 	return nodeRef
 }
 
-// NewValRef ValRef的构造函数
-func NewValRef() *ValRef {
+// newValRef ValRef的构造函数
+func newValRef() *ValRef {
 	valRef := new(ValRef)
 	valRef.Ref = nil
 	valRef.Address = 0
 	return valRef
 }
 
-func (n *Node) storeRefs(s Storage) {
+func (n *_Node) storeRefs(s _Storage) {
 	n.Val.store(s)
 	n.Left.store(s)
 	n.Right.store(s)
 }
 
-// FromNode 传入一个新的Node 将会从旧的node 继承数据,会更新newNode参数中传入的node
-func FromNode(node *Node, newNode *Node) {
+// fromNode 传入一个Node,该node将会继承传入的node的数据
+func (n *_Node) fromNode(node *_Node) {
 	length := node.Length
-	if newNode.Left != nil { // 更新左节点
-		newLength := newNode.Left.length()
+	if n.Left != nil { // 更新左节点
+		newLength := n.Left.length()
 		oldLength := node.Left.length()
 		length += newLength - oldLength
 	}
-	if newNode.Right != nil { // 更新右节点
-		newLength := newNode.Right.length()
+	if n.Right != nil { // 更新右节点
+		newLength := n.Right.length()
 		oldLength := node.Right.length()
 		length += newLength - oldLength
 	}
 	// 让新节点获得旧节点的引用
-	if newNode.Left == nil {
-		newNode.Left = node.Left
+	if n.Left == nil {
+		n.Left = node.Left
 	}
-	if newNode.Right == nil {
-		newNode.Right = node.Right
+	if n.Right == nil {
+		n.Right = node.Right
 	}
-	if newNode.Val == nil {
-		newNode.Val = node.Val
+	if n.Val == nil {
+		n.Val = node.Val
 	}
-	if newNode.Key == 0 {
-		newNode.Key = node.Key
+	if n.Key == 0 {
+		n.Key = node.Key
 	}
-	newNode.Length = length
+	n.Length = length
 }
 
-type BinaryTree struct {
-	LogicalBase
+type _BinaryTree struct {
+	_logicalBase
 }
 
-func (b BinaryTree) _get(node *Node, key int64) ([]byte, error) {
+func (b _BinaryTree) _get(node *_Node, key int64) ([]byte, error) {
 	var err error
 	for node != nil {
 		if key < node.Key {
@@ -242,61 +285,62 @@ func (b BinaryTree) _get(node *Node, key int64) ([]byte, error) {
 	return nil, errors.New("Key Error")
 }
 
-func (b BinaryTree) _insert(node *Node, key int64, valref *ValRef) *NodeRef {
-	var newNode *Node
+func (b _BinaryTree) _insert(node *_Node, key int64, valref *ValRef) *_NodeRef {
+	var insertNode *_Node
+
 	if node == nil { // 初次插入数据，构造根节点。
-		newNode = NewNode(key, 1)
-		newNode.Left = NewNodeRef()
-		newNode.Right = NewNodeRef()
-		newNode.Val = valref
+		insertNode = newNode(key, 1)
+		insertNode.Left = newNodeRef()
+		insertNode.Right = newNodeRef()
+		insertNode.Val = valref
 	} else if key < node.Key {
-		newNode = NewNode(0, 0)
+		insertNode = newNode(0, 0)
 		followNode, err := b._followNode(node.Left)
 		if err != nil {
 			fmt.Println(err)
 		}
-		newNode.Left = b._insert(followNode, key, valref)
-		FromNode(node, newNode)
+		insertNode.Left = b._insert(followNode, key, valref)
+		insertNode.fromNode(node)
 	} else if node.Key < key {
-		newNode = NewNode(0, 0)
+		insertNode = newNode(0, 0)
 		followNode, err := b._followNode(node.Right)
 		if err != nil {
 			fmt.Println(err)
 		}
-		newNode.Right = b._insert(followNode, key, valref)
-		FromNode(node, newNode)
+		insertNode.Right = b._insert(followNode, key, valref)
+		insertNode.fromNode(node)
 	} else { // 递归找到该插入的节点
-		newNode = NewNode(key, 1)
-		newNode.Val = valref
-		FromNode(node, newNode)
+		insertNode = newNode(key, 1)
+		insertNode.Val = valref
+		insertNode.fromNode(node)
 	}
-	re := NewNodeRef()
-	re.Ref = newNode
+	re := newNodeRef()
+	re.Ref = insertNode
 	return re
 }
 
 // 删除树中的节点，本函数将递归构造一个新的树并返回根节点的引用
-func (b BinaryTree) _delete(node *Node, key int64) (*NodeRef, error) {
-	var newNode *Node
+func (b _BinaryTree) _delete(node *_Node, key int64) (*_NodeRef, error) {
+	var newRoot *_Node
 	if node == nil {
 		// 找不到要删除的节点
-		return &NodeRef{}, errors.New("KeyErrors")
+		return &_NodeRef{}, errors.New("KeyErrors")
 	} else if key < node.Key {
-		newNode = &Node{}
+		newRoot = &_Node{}
 		followNode, err := b._followNode(node.Left)
 		if err != nil {
 			fmt.Println(err)
 		}
-		newNode.Left, err = b._delete(followNode, key)
-		FromNode(node, newNode)
+		newRoot.Left, err = b._delete(followNode, key)
+		newRoot.fromNode(node)
 	} else if node.Key < key {
-		newNode = &Node{}
+		newRoot = &_Node{}
 		followNode, err := b._followNode(node.Right)
 		if err != nil {
 			fmt.Println(err)
 		}
-		newNode.Right, err = b._delete(followNode, key)
-		FromNode(node, newNode)
+		newRoot.Right, err = b._delete(followNode, key)
+		newRoot.fromNode(node)
 	} else {
 		left, err := b._followNode(node.Left)
 		if err != nil {
@@ -312,23 +356,23 @@ func (b BinaryTree) _delete(node *Node, key int64) (*NodeRef, error) {
 			if err != nil {
 				fmt.Println(err)
 			}
-			newNode = NewNode(replacement.Key, leftRef.length()+node.Right.length()+1)
-			newNode.Left = leftRef
-			newNode.Right = node.Right
-			newNode.Val = replacement.Val
+			newRoot = newNode(replacement.Key, leftRef.length()+node.Right.length()+1)
+			newRoot.Left = leftRef
+			newRoot.Right = node.Right
+			newRoot.Val = replacement.Val
 		} else if left != nil {
 			return node.Left, nil
 		} else {
 			return node.Right, nil
 		}
 	}
-	reNodeRef := NewNodeRef()
-	reNodeRef.Ref = newNode
-	reNodeRef.Address = 0
+	reNodeRef := newNodeRef()
+	reNodeRef.Ref = newRoot
+	reNodeRef.Address = -1
 	return reNodeRef, nil
 }
 
-func (b BinaryTree) _findMax(node *Node) *Node {
+func (b _BinaryTree) _findMax(node *_Node) *_Node {
 	for {
 		nextNode, _ := b._followNode(node.Right)
 		if nextNode == nil {
