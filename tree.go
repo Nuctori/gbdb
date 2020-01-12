@@ -31,11 +31,20 @@ func (v *ValRef) address() int64 {
 func (v *ValRef) _prepareToStore(s _Storage) {}
 
 func _TypetoInt(valType interface{}) (int64, error) {
+
+	anyBytesToInt64 := func(bytes []byte) int64 {
+		data := []byte(bytes)
+		Sha1Inst := sha1.New()
+		Sha1Inst.Write(data)
+		Result := Sha1Inst.Sum([]byte(""))
+		return int64(binary.BigEndian.Uint64(Result))
+	}
 	switch v := valType.(type) {
 	case string:
 		_int, err := strconv.ParseInt(v, 10, 64)
 		if err != nil {
-			return int64(0), err
+			data := []byte(v)
+			return anyBytesToInt64(data), nil
 		}
 		return _int, nil
 	case int8:
@@ -54,12 +63,7 @@ func _TypetoInt(valType interface{}) (int64, error) {
 			return 0, err
 		}
 		data := buf.Bytes()
-		Sha1Inst := sha1.New()
-		Sha1Inst.Write(data)
-
-		Result := Sha1Inst.Sum([]byte(""))
-
-		return int64(binary.BigEndian.Uint64(Result)), nil
+		return anyBytesToInt64(data), nil
 	}
 }
 
