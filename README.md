@@ -37,9 +37,6 @@ func main() {
 
 ````
 
-### LICENSE
-Mit
-
 ### package interface
 ````
 gbdb.NewDB()
@@ -47,3 +44,6 @@ gbdb.Get()
 gbdb.Set()
 gbdb.Pop()
 ````
+
+### LICENSE
+Mit
